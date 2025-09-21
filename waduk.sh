@@ -323,108 +323,110 @@ TOOLS_SETUP() {
 }
 
 DOMENS_SETUP() {
-clear
-# === CREDENTIAL CLOUDFLARE ===
-# CF_ID="newvpnlunatix293@gmail.com"
-# CF_KEY="88a8619c3dec8a0c9a14cf353684036108844"
+  clear
 
-CF_ID="dal0vez.ctf@gmail.com"
+  # === CREDENTIAL CLOUDFLARE ===
+ CF_ID="dal0vez.ctf@gmail.com"
 CF_KEY="4543fcf490dfdedf197eb11dd3055af450d82"
 
-# === DOMAIN UTAMA ===
-# DOMAIN="ltexec.xyz"
-DOMAIN="dalovez.my.id"
-IPVPS=$(curl -s ipv4.icanhazip.com)
+  # === DOMAIN UTAMA ===
+  DOMAIN="dalovez.my.id"
 
-# === Generate Subdomain Random ===
-SUBDOMAIN=$(cat /dev/urandom | tr -dc a-z0-9 | head -c 5)
-RECORD="$SUBDOMAIN.$DOMAIN"
+  # Pakai IP publik server ini (boleh juga hardcode kalau perlu):
+  IPVPS=$(curl -s ipv4.icanhazip.com)
+  # Atau paksa manual kalau kamu yakin IP-nya ini:
+  # IPVPS="103.183.5.35"
 
-# === Get Zone ID dari Cloudflare ===
-ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$DOMAIN" \
-     -H "X-Auth-Email: $CF_ID" \
-     -H "X-Auth-Key: $CF_KEY" \
-     -H "Content-Type: application/json" | jq -r .result[0].id)
+  # === Generate Subdomain Random ===
+  SUBDOMAIN=$(tr -dc a-z0-9 </dev/urandom | head -c 5)
+  RECORD="$SUBDOMAIN.$DOMAIN"
 
-# === Cek apakah record sudah ada ===
-RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?type=A&name=$RECORD" \
-     -H "X-Auth-Email: $CF_ID" \
-     -H "X-Auth-Key: $CF_KEY" \
-     -H "Content-Type: application/json" | jq -r .result[0].id)
-
-# === Tambah / Update Record ===
-if [[ "$RECORD_ID" == "null" ]]; then
-  echo "➕ Menambahkan record baru: $RECORD"
-  curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
+  # === Get Zone ID dari Cloudflare ===
+  ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$DOMAIN" \
        -H "X-Auth-Email: $CF_ID" \
        -H "X-Auth-Key: $CF_KEY" \
-       -H "Content-Type: application/json" \
-       --data "{\"type\":\"A\",\"name\":\"$RECORD\",\"content\":\"$IPVPS\",\"ttl\":120,\"proxied\":false}" > /dev/null
-else
-  echo "🔄 Mengupdate record lama: $RECORD"
-  curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
+       -H "Content-Type: application/json" | jq -r .result[0].id)
+
+  # === Cek apakah record sudah ada ===
+  RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?type=A&name=$RECORD" \
        -H "X-Auth-Email: $CF_ID" \
        -H "X-Auth-Key: $CF_KEY" \
-       -H "Content-Type: application/json" \
-       --data "{\"type\":\"A\",\"name\":\"$RECORD\",\"content\":\"$IPVPS\",\"ttl\":120,\"proxied\":false}" > /dev/null
-fi
+       -H "Content-Type: application/json" | jq -r .result[0].id)
 
-# === Simpan Hasil Domain ke File (APPEND) ===
-echo "$RECORD" >> /etc/xray/domain 
-echo "$RECORD" >> ~/domain # /root/domain
+  # === Tambah / Update Record ===
+  if [[ "$RECORD_ID" == "null" ]]; then
+    echo "➕ Menambahkan record baru: $RECORD -> $IPVPS"
+    curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
+         -H "X-Auth-Email: $CF_ID" \
+         -H "X-Auth-Key: $CF_KEY" \
+         -H "Content-Type: application/json" \
+         --data "{\"type\":\"A\",\"name\":\"$RECORD\",\"content\":\"$IPVPS\",\"ttl\":120,\"proxied\":false}" >/dev/null
+  else
+    echo "🔄 Mengupdate record lama: $RECORD -> $IPVPS"
+    curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
+         -H "X-Auth-Email: $CF_ID" \
+         -H "X-Auth-Key: $CF_KEY" \
+         -H "Content-Type: application/json" \
+         --data "{\"type\":\"A\",\"name\":\"$RECORD\",\"content\":\"$IPVPS\",\"ttl\":120,\"proxied\":false}" >/dev/null
+  fi
+
+  # === Simpan domain (OVERWRITE, bukan append) ===
+  echo "$RECORD" > /etc/xray/domain
+  echo "$RECORD" > /root/domain
+
+  # === Tunggu sampai DNS resolve ke IP server ini ===
+  echo -n "⏳ Menunggu DNS $RECORD -> $IPVPS"
+  for i in {1..60}; do
+    TARGET=$(dig +short "$RECORD" @1.1.1.1)
+    [[ "$TARGET" == "$IPVPS" ]] && { echo -e "\n✅ DNS OK ($TARGET)"; break; }
+    echo -n "."
+    sleep 2
+  done
+  if [[ "$TARGET" != "$IPVPS" ]]; then
+    echo -e "\n❌ DNS belum mengarah ke $IPVPS (sekarang: ${TARGET:-none}). Stop."
+    return 1
+  fi
 }
 
 SSL_SETUP() {
-    clear
-    print_install "Memasang SSL Certificate pada domain"
+  clear
+  print_install "Memasang SSL Certificate pada domain"
 
-    # Cek domain
-    if [[ ! -f /root/domain ]]; then
-        print_error "File /root/domain tidak ditemukan!"
-        return 1
-    fi
+  [[ ! -f /root/domain ]] && { print_error "File /root/domain tidak ditemukan!"; return 1; }
 
-    domain=$(cat /root/domain)
+  # Ambil HANYA baris terakhir (satu hostname)
+  domain=$(tail -n1 /root/domain)
 
-    # Hentikan service yang menggunakan port 80
-    webserver_port=$(lsof -i:80 | awk 'NR==2 {print $1}')
-    if [[ -n "$webserver_port" ]]; then
-        print_info "Menghentikan service $webserver_port yang menggunakan port 80..."
-        systemctl stop "$webserver_port"
-    fi
+  # Matikan service di 80/443 kalau ada
+  systemctl stop nginx 2>/dev/null
+  systemctl stop apache2 2>/dev/null
+  fuser -k 80/tcp 2>/dev/null
+  fuser -k 443/tcp 2>/dev/null
 
-    systemctl stop nginx >/dev/null 2>&1
+  # Jangan hapus folder acme tiap kali; cukup install sekali
+  if [[ ! -x /root/.acme.sh/acme.sh ]]; then
+    curl https://get.acme.sh | sh -s email=no-reply@$domain
+    source /root/.bashrc 2>/dev/null || true
+  fi
 
-    # Hapus sertifikat lama
-    rm -f /etc/xray/xray.key /etc/xray/xray.crt
-    rm -rf /root/.acme.sh
-    mkdir -p /root/.acme.sh
+  /root/.acme.sh/acme.sh --upgrade --auto-upgrade
+  /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt
 
-    # Download ACME.sh
-    curl -s https://acme-install.netlify.app/acme.sh -o /root/.acme.sh/acme.sh
-    chmod +x /root/.acme.sh/acme.sh
+  export DEBUG=2
+  /root/.acme.sh/acme.sh --issue -d "$domain" --standalone -k ec-256 || {
+    print_error "Gagal issue (standalone). Coba DNS-01 via Cloudflare bila masih bentrok."
+    return 1
+  }
 
-    # Upgrade dan konfigurasi ACME
-    /root/.acme.sh/acme.sh --upgrade --auto-upgrade
-    /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+  /root/.acme.sh/acme.sh --installcert -d "$domain" \
+    --fullchainpath /etc/xray/xray.crt \
+    --keypath /etc/xray/xray.key \
+    --ecc
 
-    # Proses issue SSL
-    /root/.acme.sh/acme.sh --issue -d "$domain" --standalone -k ec-256
-    if [[ $? -ne 0 ]]; then
-        print_error "Gagal mendapatkan sertifikat SSL dari Let's Encrypt"
-        return 1
-    fi
-
-    # Pasang sertifikat ke direktori Xray
-    ~/.acme.sh/acme.sh --installcert -d "$domain" \
-        --fullchainpath /etc/xray/xray.crt \
-        --keypath /etc/xray/xray.key \
-        --ecc
-
-    chmod 600 /etc/xray/xray.key /etc/xray/xray.crt
-
-    print_success "Sertifikat SSL berhasil dipasang untuk domain: $domain"
+  chmod 600 /etc/xray/xray.key /etc/xray/xray.crt
+  print_success "Sertifikat SSL terpasang untuk: $domain"
 }
+
 
 
 FODER_SETUP() {
