@@ -333,7 +333,7 @@ CF_KEY="4543fcf490dfdedf197eb11dd3055af450d82"
 
 # === DOMAIN UTAMA ===
 # DOMAIN="ltexec.xyz"
-DOMAIN="tunl.dalovez.my.id"
+DOMAIN="dalovez.my.id"
 IPVPS=$(curl -s ipv4.icanhazip.com)
 
 # === Generate Subdomain Random ===
